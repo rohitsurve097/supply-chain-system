@@ -135,6 +135,7 @@ kubectl apply -k infra/kubernetes
 ## CI/CD (GitHub Actions)
 Workflow file:
 - `.github/workflows/ci-cd.yml`
+- Deploy job automatically runs only after all required GitHub secrets are configured.
 
 Pipeline stages:
 1. Compile-check Python services.
@@ -148,3 +149,9 @@ Required GitHub Secrets:
 - `SHIPMENT_SERVICE_DB_URL`
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
+
+## Learning Path
+- Beginner step-by-step guide:
+  - `docs/LEARNING_AND_DEPLOYMENT_GUIDE.md`
+- Helper to generate `KUBE_CONFIG_DATA`:
+  - `scripts/print_kube_config_secret.sh`

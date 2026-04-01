@@ -15,6 +15,7 @@ spec:
       labels:
         app: shipment-service
     spec:
+      enableServiceLinks: false
       containers:
         - name: shipment-service
           image: ghcr.io/your-org/supply-chain-shipment-service:latest

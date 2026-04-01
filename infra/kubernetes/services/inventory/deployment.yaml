@@ -15,6 +15,7 @@ spec:
       labels:
         app: inventory-service
     spec:
+      enableServiceLinks: false
       containers:
         - name: inventory-service
           image: ghcr.io/your-org/supply-chain-inventory-service:latest

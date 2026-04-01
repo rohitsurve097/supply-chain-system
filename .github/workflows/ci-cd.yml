@@ -88,23 +88,43 @@ jobs:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
     needs: build-and-push
-    if: >
-      github.ref == 'refs/heads/main' &&
-      secrets.KUBE_CONFIG_DATA != '' &&
-      secrets.ORDER_SERVICE_DB_URL != '' &&
-      secrets.INVENTORY_SERVICE_DB_URL != '' &&
-      secrets.SHIPMENT_SERVICE_DB_URL != '' &&
-      secrets.AWS_ACCESS_KEY_ID != '' &&
-      secrets.AWS_SECRET_ACCESS_KEY != ''
+    if: github.ref == 'refs/heads/main'
     environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check required secrets
+        id: secrets_check
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+          ORDER_SERVICE_DB_URL: ${{ secrets.ORDER_SERVICE_DB_URL }}
+          INVENTORY_SERVICE_DB_URL: ${{ secrets.INVENTORY_SERVICE_DB_URL }}
+          SHIPMENT_SERVICE_DB_URL: ${{ secrets.SHIPMENT_SERVICE_DB_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          missing=0
+          for key in KUBE_CONFIG_DATA ORDER_SERVICE_DB_URL INVENTORY_SERVICE_DB_URL SHIPMENT_SERVICE_DB_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            if [ -z "${!key}" ]; then
+              echo "Missing secret: $key"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -eq 1 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Deploy will be skipped because required secrets are missing."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up kubectl
+        if: steps.secrets_check.outputs.ready == 'true'
         uses: azure/setup-kubectl@v4
 
       - name: Configure kubeconfig
+        if: steps.secrets_check.outputs.ready == 'true'
         env:
           KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
         run: |
@@ -112,6 +132,7 @@ jobs:
           echo "$KUBE_CONFIG_DATA" | base64 --decode > "$HOME/.kube/config"
 
       - name: Create/Update Kubernetes secret
+        if: steps.secrets_check.outputs.ready == 'true'
         env:
           ORDER_SERVICE_DB_URL: ${{ secrets.ORDER_SERVICE_DB_URL }}
           INVENTORY_SERVICE_DB_URL: ${{ secrets.INVENTORY_SERVICE_DB_URL }}
@@ -129,6 +150,7 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Update deployment images
+        if: steps.secrets_check.outputs.ready == 'true'
         env:
           REGISTRY: ${{ env.REGISTRY }}
           OWNER: ${{ github.repository_owner }}
@@ -139,10 +161,16 @@ jobs:
           sed -i "s|ghcr.io/your-org/supply-chain-shipment-service:latest|$REGISTRY/$OWNER/supply-chain-shipment-service:$TAG|g" infra/kubernetes/services/shipment/deployment.yaml
 
       - name: Deploy manifests
+        if: steps.secrets_check.outputs.ready == 'true'
         run: kubectl apply -k infra/kubernetes
 
       - name: Verify rollout
+        if: steps.secrets_check.outputs.ready == 'true'
         run: |
           kubectl -n supply-chain rollout status deployment/order-service
           kubectl -n supply-chain rollout status deployment/inventory-service
           kubectl -n supply-chain rollout status deployment/shipment-service
+
+      - name: Deploy skipped notice
+        if: steps.secrets_check.outputs.ready != 'true'
+        run: echo "Skipping deploy because required GitHub secrets are not configured."

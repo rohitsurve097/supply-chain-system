@@ -153,5 +153,7 @@ Required GitHub Secrets:
 ## Learning Path
 - Beginner step-by-step guide:
   - `docs/LEARNING_AND_DEPLOYMENT_GUIDE.md`
+- Full master handbook (architecture, diagrams, incidents, AWS + CI/CD + teardown):
+  - `docs/MASTER_END_TO_END_GUIDE.md`
 - Helper to generate `KUBE_CONFIG_DATA`:
   - `scripts/print_kube_config_secret.sh`

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: supply-chain
+  labels:
+    app.kubernetes.io/name: supply-chain
+    app.kubernetes.io/part-of: supply-chain-platform

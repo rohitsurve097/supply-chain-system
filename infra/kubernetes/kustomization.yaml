@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base/namespace.yaml
+  - base/configmap.yaml
+  # Copy secret.template.yaml to a real secret file or use External Secrets in production.
+  # - base/secret.yaml
+
+  - services/order/deployment.yaml
+  - services/order/service.yaml
+  - services/order/hpa.yaml
+
+  - services/inventory/deployment.yaml
+  - services/inventory/service.yaml
+  - services/inventory/hpa.yaml
+
+  - services/shipment/deployment.yaml
+  - services/shipment/service.yaml
+  - services/shipment/hpa.yaml

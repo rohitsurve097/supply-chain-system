@@ -1,0 +1,141 @@
+name: Supply Chain CI/CD
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    name: Syntax and Structure Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python services
+        run: |
+          python -m compileall services/order_service/app
+          python -m compileall services/inventory_service/app
+          python -m compileall services/shipment_service/app
+
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service_name: order_service
+            image_name: supply-chain-order-service
+          - service_name: inventory_service
+            image_name: supply-chain-inventory-service
+          - service_name: shipment_service
+            image_name: supply-chain-shipment-service
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image_name }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/${{ matrix.service_name }}
+          file: ./services/${{ matrix.service_name }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBE_CONFIG_DATA" | base64 --decode > "$HOME/.kube/config"
+
+      - name: Create/Update Kubernetes secret
+        env:
+          ORDER_SERVICE_DB_URL: ${{ secrets.ORDER_SERVICE_DB_URL }}
+          INVENTORY_SERVICE_DB_URL: ${{ secrets.INVENTORY_SERVICE_DB_URL }}
+          SHIPMENT_SERVICE_DB_URL: ${{ secrets.SHIPMENT_SERVICE_DB_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          kubectl create namespace supply-chain --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n supply-chain create secret generic supply-chain-secrets \
+            --from-literal=ORDER_SERVICE_DB_URL="$ORDER_SERVICE_DB_URL" \
+            --from-literal=INVENTORY_SERVICE_DB_URL="$INVENTORY_SERVICE_DB_URL" \
+            --from-literal=SHIPMENT_SERVICE_DB_URL="$SHIPMENT_SERVICE_DB_URL" \
+            --from-literal=AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+            --from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update deployment images
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          OWNER: ${{ github.repository_owner }}
+          TAG: sha-${{ github.sha }}
+        run: |
+          sed -i "s|ghcr.io/your-org/supply-chain-order-service:latest|$REGISTRY/$OWNER/supply-chain-order-service:$TAG|g" infra/kubernetes/services/order/deployment.yaml
+          sed -i "s|ghcr.io/your-org/supply-chain-inventory-service:latest|$REGISTRY/$OWNER/supply-chain-inventory-service:$TAG|g" infra/kubernetes/services/inventory/deployment.yaml
+          sed -i "s|ghcr.io/your-org/supply-chain-shipment-service:latest|$REGISTRY/$OWNER/supply-chain-shipment-service:$TAG|g" infra/kubernetes/services/shipment/deployment.yaml
+
+      - name: Deploy manifests
+        run: kubectl apply -k infra/kubernetes
+
+      - name: Verify rollout
+        run: |
+          kubectl -n supply-chain rollout status deployment/order-service
+          kubectl -n supply-chain rollout status deployment/inventory-service
+          kubectl -n supply-chain rollout status deployment/shipment-service

@@ -1,0 +1,94 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sc_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-supply_chain}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-supply_chain}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3.8.1
+    container_name: sc_localstack
+    environment:
+      SERVICES: sqs
+      AWS_DEFAULT_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+      DEBUG: 0
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./infra/docker/localstack/create-queues.sh:/etc/localstack/init/ready.d/create-queues.sh:ro
+
+  order_service:
+    build:
+      context: ./services/order_service
+      dockerfile: Dockerfile
+    container_name: sc_order_service
+    env_file:
+      - .env
+    environment:
+      ORDER_SERVICE_DB_URL: ${ORDER_SERVICE_DB_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/supply_chain}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
+      ORDER_SQS_QUEUE_URL: ${ORDER_SQS_QUEUE_URL:-http://localstack:4566/000000000000/order-events}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+  inventory_service:
+    build:
+      context: ./services/inventory_service
+      dockerfile: Dockerfile
+    container_name: sc_inventory_service
+    env_file:
+      - .env
+    environment:
+      INVENTORY_SERVICE_DB_URL: ${INVENTORY_SERVICE_DB_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/supply_chain}
+      INVENTORY_SQS_QUEUE_URL: ${INVENTORY_SQS_QUEUE_URL:-http://localstack:4566/000000000000/order-events}
+      INVENTORY_EVENT_QUEUE_URL: ${INVENTORY_EVENT_QUEUE_URL:-http://localstack:4566/000000000000/inventory-events}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+  shipment_service:
+    build:
+      context: ./services/shipment_service
+      dockerfile: Dockerfile
+    container_name: sc_shipment_service
+    env_file:
+      - .env
+    environment:
+      SHIPMENT_SERVICE_DB_URL: ${SHIPMENT_SERVICE_DB_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/supply_chain}
+      SHIPMENT_SQS_QUEUE_URL: ${SHIPMENT_SQS_QUEUE_URL:-http://localstack:4566/000000000000/inventory-events}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-http://localstack:4566}
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+volumes:
+  postgres_data:
